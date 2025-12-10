@@ -1,0 +1,57 @@
+#heavens-above/.github/workflows/code-review.yml
+name: Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        id: lint
+        run: |
+          npm run lint > lint.txt 2>&1 || echo "code=$?" >> $GITHUB_OUTPUT
+
+      - name: Audit
+        run: npm audit --json > audit.json || true
+
+      - name: Upload Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-reports
+          path: |
+            lint.txt
+            audit.json
+
+      - name: Comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const lint = require('fs').readFileSync('lint.txt', 'utf8');
+            const body = lint ? `### ESLint Issues\n\`\`\`\n${lint}\n\`\`\`` : 'No lint issues';
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body
+            })
+
+      - name: Fail if lint errors
+        if: steps.lint.outputs.code != '0'
+        run: exit 1

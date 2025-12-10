@@ -1,0 +1,43 @@
+#
+name: Release Notes
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get Tag
+        id: tag
+        run: |
+          echo "tag=${{ github.event.inputs.tag_name || github.ref_name }}" >> $GITHUB_OUTPUT
+
+      - name: Generate Notes
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          PREV=$(git describe --tags --abbrev=0 @^ 2>/dev/null || echo "")
+          echo "## $TAG" > notes.md
+          git log ${PREV}..HEAD --pretty="- %s" >> notes.md
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          body_path: notes.md
+          files: |
+            package.json
+            README.md
