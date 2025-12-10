@@ -1,0 +1,56 @@
+#heavens-above/.github/workflows/documentation.yml
+name: Deploy Documentation
+
+on:
+  push:
+    paths:
+      - 'README.md'
+      - 'docs/**'
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docs
+        run: |
+          mkdir -p docs-build
+          cp README.md docs-build/
+          cat > docs-build/index.html << 'EOF'
+          <!DOCTYPE html><html><head><title>Docs</title><meta charset="utf-8"><style>body{font-family:Arial;margin:40px auto;max-width:800px;line-height:1.6}</style></head><body><div id="content"></div><script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script><script>fetch('README.md').then(r=>r.text()).then(t=>document.getElementById('content').innerHTML=marked.parse(t))</script></body></html>
+          EOF
+
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v5
+        continue-on-error: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./docs-build
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Deployment Status
+        run: |
+          if [ "${{ steps.deployment.outcome }}" != "success" ]; then
+            echo "⚠️ GitHub Pages deployment failed. Please enable GitHub Pages in repository settings (Settings → Pages → Source: GitHub Actions)"
+          else
+            echo "✅ Documentation deployed successfully: ${{ steps.deployment.outputs.page_url }}"
+          fi

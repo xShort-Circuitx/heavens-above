@@ -1,0 +1,87 @@
+#heavens-above/.github/workflows/scheduled-tasks.yml
+name: Daily Data Update
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Prepare Data Directory
+        run: |
+          mkdir -p public/data
+          # Create common subdirectories that the script might need
+          mkdir -p public/data/satellite25544
+          touch public/data/.gitkeep || true
+
+      - name: Scrape
+        id: scrape
+        continue-on-error: true
+        run: |
+          # Ensure the script can create directories it needs
+          node run.js 2>&1 || {
+            EXIT_CODE=$?
+            echo "scrape_failed=true" >> $GITHUB_OUTPUT
+            echo "Scrape exited with code: $EXIT_CODE"
+            # Don't fail the workflow if scrape has errors
+            exit 0
+          }
+
+      - name: Commit Changes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+          
+          # Check if data directory exists and has files (excluding .gitkeep)
+          if [ -d "public/data" ]; then
+            # Add all files in data directory
+            if find public/data -type f ! -name ".gitkeep" | grep -q .; then
+              git add public/data/ || true
+              if ! git diff --quiet --staged; then
+                git commit -m "Update data: $(date -u '+%Y-%m-%d %H:%M UTC')" || exit 0
+                git push origin HEAD:main || exit 0
+                echo "Changes committed and pushed successfully"
+              else
+                echo "No changes to commit"
+              fi
+            else
+              echo "No data files found to commit (only .gitkeep exists)"
+            fi
+          else
+            echo "Data directory does not exist"
+          fi
+
+      - name: Log Update Summary
+        run: |
+          echo "## Data Update Summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Update completed at $(date -u '+%Y-%m-%d %H:%M UTC')" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ steps.scrape.outputs.scrape_failed }}" = "true" ]; then
+            echo "- ⚠️ Scrape step encountered errors" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ✅ Scrape completed successfully" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "- Data files in public/data/ have been processed" >> $GITHUB_STEP_SUMMARY

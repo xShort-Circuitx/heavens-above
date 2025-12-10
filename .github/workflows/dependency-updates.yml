@@ -1,0 +1,96 @@
+#heavens-above/.github/workflows/dependency-updates.yml
+name: Test Dependency Updates
+
+on:
+  pull_request:
+    paths:
+      - 'package.json'
+      - 'package-lock.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install
+        run: npm ci
+
+      - name: Check Dependabot PR
+        id: dependabot
+        run: |
+          if [ "${{ github.actor }}" = "dependabot[bot]" ]; then
+            echo "is_dependabot=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_dependabot=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Version Changes
+        id: version_check
+        run: |
+          git fetch origin main:main 2>/dev/null || true
+          if git diff main...HEAD -- package.json | grep -q '"version"'; then
+            echo "version_changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "version_changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Audit
+        id: audit
+        continue-on-error: true
+        run: |
+          npm audit --audit-level=moderate 2>&1 || echo "audit_failed=true" >> $GITHUB_OUTPUT
+          echo "audit_exit_code=$?" >> $GITHUB_OUTPUT
+
+      - name: Test
+        id: test
+        continue-on-error: true
+        run: |
+          npm test || echo "test_failed=true" >> $GITHUB_OUTPUT
+
+      - name: Comment
+        uses: actions/github-script@v7
+        continue-on-error: true
+        with:
+          script: |
+            const isDependabot = '${{ steps.dependabot.outputs.is_dependabot }}' === 'true';
+            const versionChanged = '${{ steps.version_check.outputs.version_changed }}' === 'true';
+            const auditPassed = '${{ steps.audit.outcome }}' === 'success';
+            const testPassed = '${{ steps.test.outcome }}' === 'success';
+            
+            let body = '## Dependency Update Test Results\n\n';
+            body += `- **PR Author**: ${isDependabot ? 'Dependabot 🤖' : context.actor}\n`;
+            body += `- **Version Changed**: ${versionChanged ? 'Yes' : 'No'}\n`;
+            body += `- **Security Audit**: ${auditPassed ? '✅ Passed' : '❌ Failed'}\n`;
+            body += `- **Tests**: ${testPassed ? '✅ Passed' : '❌ Failed'}\n\n`;
+            
+            if (isDependabot && !versionChanged) {
+              body += 'ℹ️ This is a Dependabot PR. Version updates follow semantic versioning rules.\n';
+            }
+            
+            if (!auditPassed || !testPassed) {
+              body += '\n⚠️ Some checks failed. Please review before merging.\n';
+            }
+            
+            try {
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body
+              });
+            } catch (e) {
+              console.log('Failed to create comment:', e.message);
+            }
